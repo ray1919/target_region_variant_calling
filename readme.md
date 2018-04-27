@@ -24,5 +24,26 @@ This is pipeline script I use for variant calling in amplicon based sequencing d
 
 ### Parameters
 ```
+target_region_variant_calling.sh [OPTION]... [FILE]...
 
+This is pipeline script I use for variant calling in amplicon based sequencing data, mainly gene exon sequencing.
+
+ Options:
+  -s, --sample_file sample list file, one sample per line
+  -p, --primer_file interleaved 5p/3p primers of amplicon PCR design
+  -d, --data_dir    fastq data dir, should contain [sample]_R1/2.fastq.gz, default: data
+  -a, --adapter1    the adapter for read1. For SE data, if not specified, the adapter will be auto-detected. For PE data, this is used if R1/R2 are found not overlapped. (string [=auto])
+  -A, --adapter2    the adapter for read2 (PE data only). This is used if R1/R2 are found not overlapped. If not specified, it will be the same as <adapter1> (string [=])
+  -g, --gene_file   one gene symbol per line, should be official gene symbol
+  -f, --gene_gtf    ensembl gene GTF file downloaded in [ensembl website](http://asia.ensembl.org/info/data/ftp/index.html), ungziped file
+  -r, --ref_fasta   alignment referece fasta file, must use a relative path format, like ../broad-references/hg38/v0/Homo_sapiens_assembly38.fasta
+  -o, --out_dir     output dir name, default is a random name outputXXXX
+  --force           Skip all user interaction.  Implied 'Yes' to all actions.
+  -q, --quiet       Quiet (no output)
+  -l, --log         Print log to file
+  -s, --strict      Exit script with null variables.  i.e 'set -o nounset'
+  -v, --verbose     Output more information. (Items echoed to 'verbose')
+  -d, --debug       Runs script in BASH debug mode (set -x)
+  -h, --help        Display this help and exit
+      --version     Output version information and exit
 ```

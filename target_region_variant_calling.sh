@@ -3,7 +3,7 @@
 # ##################################################
 # My Generic BASH script template
 #
-version="0.0.1"               # Sets version variable
+version="0.0.3"               # Sets version variable
 #
 scriptTemplateVersion="1.5.0" # Version of scriptTemplate.sh that this script is based on
 #  v1.1.0 -  Added 'debug' option
@@ -84,6 +84,7 @@ verbose=false
 force=false
 strict=false
 debug=false
+threads=4
 args=()
 
 # Set Temp Directory
@@ -199,7 +200,7 @@ echo ###############################################
 
 ##Step1: Check tool version
 mkdir -p $outDir
-fastp --version | tee -a ${logFile}
+fastp --version | tee ${logFile}
 cutPrimers.py -v | tee -a ${logFile}
 echo "minimap2 version:" | tee -a ${logFile}
 minimap2 --version | tee -a ${logFile}
@@ -211,84 +212,117 @@ Rscript --version | tee -a ${logFile}
 
 ##Step2: Raw data qc
 for sample in `cat ${sample_file}`; do
-    fastp -z 3 -w 4 \
-        -i ${data_dir}/${s}_R1.fastq.gz \
-        -I ${data_dir}/${s}_R2.fastq.gz \
-        -o fastp/${sample}_r1.fq.gz \
-        -O fastp/${sample}_r2.fq.gz \
-        -j fastp/${sample}.json \
-        -h fastp/${sample}.html \
-        -R "${sample} QC report" \
-        --adapter_sequence ${adapter1} \
-        --adapter_sequence_r2 ${adapter2} \
-        2>&1 | tee -a ${logFile}
+    fastp_dir=$outDir/fastp/$sample
+    mkdir -p $fastp_dir
+    if [[ ! -e ${fastp_dir}/log.txt ]]; then
+        fastp -z 3 -w ${threads} \
+            -i ${data_dir}/${sample}_R1.fastq.gz \
+            -I ${data_dir}/${sample}_R2.fastq.gz \
+            -o $fastp_dir/${sample}_r1.fq.gz \
+            -O $fastp_dir/${sample}_r2.fq.gz \
+            -j $fastp_dir/${sample}.json \
+            -h $fastp_dir/${sample}.html \
+            -R "${sample} QC report" \
+            --adapter_sequence ${adapter1} \
+            --adapter_sequence_r2 ${adapter2} \
+            2>&1 | tee ${fastp_dir}/log.txt
+    fi
 done
 
 ##Step3: cut primers
 for sample in `cat ${sample_file}`; do
-    CUTDIR=cutprimers/${sample}
+    CUTDIR=$outDir/cutprimers/${sample}
     mkdir -p ${CUTDIR}
-    cutPrimers.py -r1 fastp/${sample}_r1.fq.gz \
-        -r2 fastp/${sample}_r2.fq.gz \
-        -pr ${primer_file} \
-        -tr1 $CUTDIR/${sample}_R1.fastq.gz \
-        -tr2 $CUTDIR/${sample}_R2.fastq.gz \
-        -utr1 $CUTDIR/r1_untrimmed.fastq.gz \
-        -utr2 $CUTDIR/r2_untrimmed.fastq.gz \
-        --identify-dimers $CUTDIR/dimer.txt \
-        -insa $CUTDIR/nsa.txt --error-number 3 \
-        --primersStatistics $CUTDIR/ps.txt \
-        --primer-location-buffer 0 \
-        --primer3-absent \
-        --threads 4 2>&1 | tee -a ${logFile}
+    fastp_dir=$outDir/fastp/$sample
+    if [[ ! -e ${CUTDIR}/log.txt ]]; then
+        cutPrimers.py -r1 $fastp_dir/${sample}_r1.fq.gz \
+            -r2 $fastp_dir/${sample}_r2.fq.gz \
+            -pr ${primer_file} \
+            -tr1 $CUTDIR/${sample}_R1.fastq.gz \
+            -tr2 $CUTDIR/${sample}_R2.fastq.gz \
+            -utr1 $CUTDIR/r1_untrimmed.fastq.gz \
+            -utr2 $CUTDIR/r2_untrimmed.fastq.gz \
+            --identify-dimers $CUTDIR/dimer.txt \
+            -insa $CUTDIR/nsa.txt --error-number 4 \
+            --primersStatistics $CUTDIR/ps.txt \
+            --primer-location-buffer 0 \
+            --primer3-absent \
+            --threads ${threads} 2>&1 | tee $CUTDIR/log.txt
+    fi
 done
 
 ##Step4: alignment, sorting & indexing sam files
 for sample in `cat ${sample_file}`; do
-    CUTDIR=cutprimers/${sample}
-    ALNDIR=alignment/${sample}
+    CUTDIR=$outDir/cutprimers/${sample}
+    ALNDIR=$outDir/alignment/${sample}
     mkdir -p ${ALNDIR}
-    string=`zcat $CUTDIR/${sample}_R1.fastq.gz |head -1`
-    IFS=':' read -r -a array <<< "$string"
-    RGID=${array[1]}.${array[2]}.${array[3]}
-    RGPU=${array[2]}.${array[3]}
-    index_file="${ref_fasta%.*}.mmi"
-    minimap2 -ax sr \
-        -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
-        /opt/data/db/broad-references/hg38/v0/Homo_sapiens_assembly38.mmi \
-        $CUTDIR/${sample}_R1.fastq.gz \
-        $CUTDIR/${sample}_R2.fastq.gz \
-        > $ALNDIR/${sample}.aligned.unsorted.sam
-    samtools sort --threads 8 -m 2G $ALNDIR/${sample}.aligned.unsorted.sam -o $ALNDIR/${sample}.aligned.sorted.bam
-    samtools index $ALNDIR/${sample}.aligned.sorted.bam
+    if [[ ! -e ${ALNDIR}/log.txt ]]; then
+        STRING=$(head -n 1 < <(zcat $CUTDIR/${sample}_R1.fastq.gz))
+        RGPU=`cut -f3-4 -d: <<< $STRING`
+        RGID=`cut -f2-4 -d: <<< $STRING`
+        index_file="${ref_fasta%.*}.mmi"
+        minimap2 -ax sr \
+            -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
+            $index_file \
+            $CUTDIR/${sample}_R1.fastq.gz \
+            $CUTDIR/${sample}_R2.fastq.gz \
+            > $ALNDIR/${sample}.aligned.unsorted.sam \
+            2>&1 | tee ${ALNDIR}/log.txt
+        samtools sort --threads ${threads} -m 2G \
+            $ALNDIR/${sample}.aligned.unsorted.sam \
+            -o $ALNDIR/${sample}.aligned.sorted.bam
+        samtools index $ALNDIR/${sample}.aligned.sorted.bam
+    fi
 done
 
 ##Step5: check gene exon coverage (optional)
 if [[ -e ${gene_file} && -e ${gene_gtf} ]]; then
     # create exon bed file
-    bed_file=${outDir}/exon.bed
+    bed_file=${outDir}/exon.bed.gz
     if [[ ! -e ${bed_file} ]]; then
         for gene in `cat ${gene_file}`; do
-            if gene=""; then continue; fi
-            grep -w "gene_name \"${gene}\"" ${gene_gtf} | grep -w CDS |cut -f1,4,5|sort -u >> ${bed_file}
+            echo $gene
+            grep -w "gene_name \"${gene}\"" ${gene_gtf} | grep -w exon |cut -f1,4,5|sort -u >> ${outDir}/exon.bed
         done
-        sed -i -s "s/^/chr/" ${gene_bed}
+        sed -i -s "s/^/chr/" ${outDir}/exon.bed
+        bgzip ${outDir}/exon.bed
+        tabix ${bed_file}
     fi
-    bamstats04 --filter "" \
-        -B ${bed_file} \
-        -o ${outDir}/coverage.txt \
-        alignment/*/*.aligned.sorted.bam \
-        | tee -a ${logFile}
+    if [[ ! -e ${outDir}/coverage.txt ]]; then
+        bamstats04 --filter "" \
+            -B ${bed_file} \
+            -o ${outDir}/coverage.txt \
+            $outDir/alignment/*/*.aligned.sorted.bam \
+            2>&1 | tee -a ${logFile}
+    fi
 fi
 
 ##Step6: variant calling
-BAMS=(alignment/*/*.aligned.sorted.bam)
+BAMS=($outDir/alignment/*/*.aligned.sorted.bam)
 function join_by { local IFS="$1"; shift; echo "$*"; }
-SAMPLES=`join_by ' --bam ' ${BAMS[@]}`
-echo ${SAMPLES}
+BAMSP=(${BAMS[@]/#/--bam=})
+SAMPLES=$(join_by ' ' ${BAMSP[@]})
 
-#configureStrelkaGermlineWorkflow.py --targeted \
-#    --referenceFasta ${ref_fasta}
+if [[ ! -z ${bed_file+x} ]]; then
+    callRegions="--callRegions=${bed_file}"
+fi
+VARDIR=$outDir/variant
+if [[ ! -e ${VARDIR}/runWorkflow.py ]]; then
+    cmd="configureStrelkaGermlineWorkflow.py --targeted \
+        --referenceFasta ${ref_fasta} \
+        ${callRegions} \
+        ${SAMPLES} \
+        --runDir ${VARDIR} 2>&1 | tee -a ${logFile}"
+    eval ${cmd}
+fi
+
+if [[ ! -e ${VARDIR}/log.txt ]]; then
+    ${VARDIR}/runWorkflow.py -j ${threads} -m local 2>&1 | tee ${VARDIR}/log.txt
+fi
+
+##Step7: vcf convert
+
+
 
 ####################################################
 ############### End Script Here ####################
@@ -313,12 +347,13 @@ This is pipeline script I use for variant calling in amplicon based sequencing d
   -f, --gene_gtf    ensembl gene GTF file downloaded in [ensembl website](http://asia.ensembl.org/info/data/ftp/index.html), ungziped file
   -r, --ref_fasta   alignment referece fasta file, must use a relative path format, like ../broad-references/hg38/v0/Homo_sapiens_assembly38.fasta
   -o, --out_dir     output dir name, default is a random name outputXXXX
+  -t, --threads     threads to use, default: 4
   --force           Skip all user interaction.  Implied 'Yes' to all actions.
   -q, --quiet       Quiet (no output)
   -l, --log         Print log to file
   -s, --strict      Exit script with null variables.  i.e 'set -o nounset'
   -v, --verbose     Output more information. (Items echoed to 'verbose')
-  -d, --debug       Runs script in BASH debug mode (set -x)
+  -b, --debug       Runs script in BASH debug mode (set -x)
   -h, --help        Display this help and exit
       --version     Output version information and exit
 "
@@ -374,14 +409,16 @@ while [[ $1 = -?* ]]; do
     -d|--data_dir) shift; data_dir=${1} ;;
     -g|--gene_file) shift; gene_file=${1} ;;
     -f|--gene_gtf) shift; gene_gtf=${1} ;;
+    -r|--ref_fasta) shift; ref_fasta=${1} ;;
     -a|--adapter1) shift; adapter1=${1} ;;
     -A|--adapter2) shift; adapter2=${1} ;;
     -o|--out_dir) shift; outDir=${1} ;;
+    -t|--threads) shift; threads=${1} ;;
     -v|--verbose) verbose=true ;;
     -l|--log) printLog=true ;;
     -q|--quiet) quiet=true ;;
     -s|--strict) strict=true;;
-    -d|--debug) debug=true;;
+    -b|--debug) debug=true;;
     --force) force=true ;;
     --endopts) shift; break ;;
     *) die "invalid option: '$1'." ;;
@@ -425,7 +462,7 @@ if ${strict}; then set -o nounset ; fi
 set -o pipefail
 
 # Invoke the checkDependenices function to test for Bash packages.  Uncomment if needed.
-# checkDependencies
+checkDependencies
 
 # Run your script
 mainScript
