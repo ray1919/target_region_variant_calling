@@ -3,7 +3,7 @@
 # ##################################################
 # My Generic BASH script template
 #
-version="0.0.3"               # Sets version variable
+version="0.0.4"               # Sets version variable
 #
 scriptTemplateVersion="1.5.0" # Version of scriptTemplate.sh that this script is based on
 #  v1.1.0 -  Added 'debug' option
@@ -27,6 +27,8 @@ scriptTemplateVersion="1.5.0" # Version of scriptTemplate.sh that this script is
 
 # Provide a variable with the location of this script.
 scriptPath=/home/zhaorui/ct208/tool/shell-scripts
+snpsift=/home/zhaorui/ct208/tool/SnpEff/snpEff/SnpSift.jar
+DBSNP=/opt/data/db/snp/gatk/hg38/dbsnp_146.hg38.vcf
 
 # Source Scripting Utilities
 # -----------------------------------
@@ -320,9 +322,20 @@ if [[ ! -e ${VARDIR}/log.txt ]]; then
     ${VARDIR}/runWorkflow.py -j ${threads} -m local 2>&1 | tee ${VARDIR}/log.txt
 fi
 
-##Step7: vcf convert
+##Step7: vcf annotate
+RESDIR=${VARDIR}/results/variants
+if [[ ! -e ${RESDIR}/annotated.vcf && -e ${RESDIR}/variants.vcf.gz ]]; then
+    java -jar $snpsift annotate ${DBSNP} ${RESDIR}/variants.vcf.gz > ${RESDIR}/annotated.vcf
+fi
 
+##Step8: vcf convert
+if [[ ! -e ${RESDIR}/reduced.vcf && -e ${RESDIR}/annotated.vcf ]]; then
+    ( grep -v '^##' ${RESDIR}/annotated.vcf | sed 's/^#//' ) > ${RESDIR}/reduced.vcf
+    Rscript reduced2report.R ${RESDIR}/reduced.vcf
+fi
 
+##Step9: QC report
+# to be continued
 
 ####################################################
 ############### End Script Here ####################

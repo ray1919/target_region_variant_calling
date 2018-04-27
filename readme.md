@@ -11,6 +11,10 @@ This is pipeline script I use for variant calling in amplicon based sequencing d
 * coverage stats: [bamstats04](https://lindenb.github.io/jvarkit/BamStats04.html)
 * variant caller: [strelka2](https://github.com/Illumina/strelka)
 * Analyze, share, reproduce: [R markdown](https://rmarkdown.rstudio.com/)
+* R packages: dplyr
+* variant annotation: [SnpSift](http://snpeff.sourceforge.net/)
+* script template: [shell-scripts](https://github.com/natelandau/shell-scripts)
+* DBSNP vcf annotation file, should be declared in the script sample_file
 
 ## Usage
 **Importtant** currently the pipeline is design for pair end data only, single end parameters temporarily not working. pair reads should be longer than 70bp, so PE100, PE150, PE300 should be ok.
@@ -38,12 +42,13 @@ This is pipeline script I use for variant calling in amplicon based sequencing d
   -f, --gene_gtf    ensembl gene GTF file downloaded in [ensembl website](http://asia.ensembl.org/info/data/ftp/index.html), ungziped file
   -r, --ref_fasta   alignment referece fasta file, must use a relative path format, like ../broad-references/hg38/v0/Homo_sapiens_assembly38.fasta
   -o, --out_dir     output dir name, default is a random name outputXXXX
+  -t, --threads     threads to use, default: 4
   --force           Skip all user interaction.  Implied 'Yes' to all actions.
   -q, --quiet       Quiet (no output)
   -l, --log         Print log to file
   -s, --strict      Exit script with null variables.  i.e 'set -o nounset'
   -v, --verbose     Output more information. (Items echoed to 'verbose')
-  -d, --debug       Runs script in BASH debug mode (set -x)
+  -b, --debug       Runs script in BASH debug mode (set -x)
   -h, --help        Display this help and exit
       --version     Output version information and exit
 ```
