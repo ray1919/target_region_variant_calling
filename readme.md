@@ -11,10 +11,21 @@ This is pipeline script I use for variant calling in amplicon based sequencing d
 * coverage stats: [bamstats04](https://lindenb.github.io/jvarkit/BamStats04.html)
 * variant caller: [strelka2](https://github.com/Illumina/strelka)
 * Analyze, share, reproduce: [R markdown](https://rmarkdown.rstudio.com/)
-* R packages: dplyr
+* R packages: dplyr, stringi, Biostrings
 * variant annotation: [SnpSift](http://snpeff.sourceforge.net/)
 * script template: [shell-scripts](https://github.com/natelandau/shell-scripts)
 * DBSNP vcf annotation file, should be declared in the script sample_file
+* Latex packages:
+``` bash
+  sudo apt install texlive-latex-extra texlive-fonts-recommended texlive-xetex
+  wget http://mirrors.ctan.org/macros/latex/contrib/titling.zip
+  unzip titling.zip     # (might need to sudo yum install unzip)
+  cd titling
+  latex titling.ins
+  sudo mkdir -p /usr/share/texlive/texmf-dist/tex/latex/titling
+  sudo cp titling.sty /usr/share/texlive/texmf-dist/tex/latex/titling/
+  sudo texhash
+```
 
 ## Usage
 **Importtant** currently the pipeline is design for pair end data only, single end parameters temporarily not working. pair reads should be longer than 70bp, so PE100, PE150, PE300 should be ok.
