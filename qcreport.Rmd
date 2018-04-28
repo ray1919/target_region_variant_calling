@@ -1,0 +1,177 @@
+---
+title: "Variant calling quality control report"
+output: html_document
+params:
+  outdir: "../output1524637425"
+  primer_file: "../primers.fa"
+  gene_file: "../gene.txt"
+---
+
+## 原始数据质量控制
+测序得到下机序列数据为FASTQ格式，如同以下样子：
+```
+@EAS139:136:FC706VJ:2:2104:15343:197393 1:Y:18:ATCACG
+GATTTGGGGTTCAAAGCAGTATCGATCAAATAGTAAATCCATTTGTTCAACTCACAGTTT
++
+CCCCCGGGG#9BB<DFGGGGGGGGGGGGGGGGGGGGGGFGGGGGGGGGGGGFFGFFFFGG
+```
+第一行是一长串序列编号，记录了测序序列的一些信息；第二行是序列，为测序得到的ATCGN碱基信息；第三行是分隔符加号；第四行是对应测序碱基的质量分数，质量分数通过ASCII编码转换为字符串，方便记录和代码计算。如下是对应ASCII字符与质量分数的对应关系。
+```
+  !"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJ
+  0.2......................26...31........41  
+```
+质量分数Q是对应碱基检测出错概率p的一个对应数字，对应公式如下：
+\[
+Q = -10 Log_{10}^p
+\]
+
+```{r, include=FALSE}
+library(jsonlite)
+library(dplyr)
+library(knitr)
+library(kableExtra) # https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html
+library(ggplot2)
+library(Biostrings)
+options(stringsAsFactors = F)
+fastpdir <- paste(params$outdir,"fastp/",sep = "/")
+samples = dir(path = fastpdir)
+primers <- readDNAStringSet(params$primer_file)
+all_primers <- sub("\\_3p|\\_5p|\\_fp|\\_rp", "", names(primers)) %>% unique()
+genes <- readLines(params$gene_file)
+```
+
+
+本次数据共计`r length(samples)`个样本。原始数据统计如下：
+```{r echo=FALSE, results='asis'}
+compress <- function(tx) {
+  tx <- as.numeric(gsub("\\,", "", tx))
+  int <- c(1e-2, 1, 1e3, 1e6, 1e9, 1e12)
+  div <- findInterval(tx, int)
+  paste(round( tx/int[div], 2), c("%","", "K","M","B","T")[div] )
+}
+
+quality_curves <- data.frame()
+summary_before_filtering <- data.frame()
+summary_after_filtering <- data.frame()
+summary_filtering_result <- data.frame()
+for (sample in samples) {
+  json <- fromJSON(paste(fastpdir, sample, "/", sample, ".json", sep = ""))
+  quality_curves <- rbind(quality_curves,
+                         data.frame(position = 1:length(json$read1_before_filtering$quality_curves$mean),
+                                    quality = json$read1_before_filtering$quality_curves$mean,
+                                    sample))
+  summary_before_filtering <- rbind(summary_before_filtering, data.frame(json$summary$before_filtering))
+  summary_after_filtering <- rbind(summary_after_filtering, data.frame(json$summary$after_filtering))
+  summary_filtering_result  <- rbind(summary_filtering_result, data.frame(json$filtering_result))
+}
+rownames(summary_before_filtering) <- samples
+summary_before_filtering <- t(summary_before_filtering[,c(1,2,5:7)])
+
+rownames(summary_after_filtering) <- samples
+summary_after_filtering <- t(summary_after_filtering[,c(1,2,5:7)])
+
+rownames(summary_filtering_result) <- samples
+summary_filtering_result <- t(summary_filtering_result)
+
+summary_tbl <- rbind(summary_before_filtering, summary_after_filtering, summary_filtering_result)
+rownames(summary_tbl) <- gsub(pattern = "_", replacement = " ", x = rownames(summary_tbl))
+
+for(i in 1:nrow(summary_tbl)) {
+  summary_tbl[i,] <- compress(summary_tbl[i,])
+}
+
+kable(summary_tbl, caption = "Quality control summary", format="html", digits=0) %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F) %>%
+  group_rows("Before filtering", 1, 5) %>%
+  group_rows("After filtering", 6, 10) %>%
+  group_rows("Filtering result", 11, 13)
+```
+
+```{r echo=FALSE, results='asis', fig.align="center", fig.cap="Before filtering quality curves"}
+ggplot(data=quality_curves, aes(x=position, y=quality, color=sample)) +
+  geom_line() +
+  theme_bw()
+```
+
+## 扩增片段质量控制
+基于片段扩增的测序是针对引物扩增片段进行测序，通过检测引物序列可以检测测序数据中，各个扩增片段的分布情况。此次实验共设计```r length(primers)/2```对PCR引物，检测```r length(genes)```个目标基因(```r paste(genes, sep=", ")```)。具体共计结果如下表：
+
+```{r echo=FALSE, results='asis'}
+cutdir <- paste(params$outdir,"cutprimers/",sep = "/")
+dimer_df <- data.frame()
+nsa_df <- data.frame()
+ps_df <- data.frame()
+bad_df <- data.frame()
+for (sample in samples) {
+  dimer <- read.table(paste(cutdir, sample, "/", "dimer.txt", sep = ""), sep = "\t",header = T)
+  colnames(dimer)[2] <- sample
+  if (nrow(dimer_df) == 0){
+    dimer_df <- dimer
+  } else {
+    dimer_df <- merge(dimer_df, dimer, all=T)
+  }
+  
+  nsa <- read.table(paste(cutdir, sample, "/", "nsa.txt", sep = ""), sep = "\t",header = T)
+  colnames(nsa)[2] <- sample
+  if (nrow(nsa_df) == 0){
+    nsa_df <- nsa
+  } else {
+    nsa_df <- merge(nsa_df, nsa, all=T)
+  }
+  
+  ps <- read.table(paste(cutdir, sample, "/", "ps.txt", sep = ""), sep = "\t",header = T)
+  ps$Primer <- sub("\\_3p|\\_5p|\\_fp|\\_rp", "",ps$Primer,ignore.case = T)
+  ps <- ps[!duplicated(ps$Primer),]
+  colnames(ps)[2] <- sample
+  if (nrow(ps_df) == 0){
+    ps_df <- ps[,1:2]
+  } else {
+    ps_df <- merge(ps_df, ps[,1:2], all=T)
+  }
+  
+  dimer_primers <- strsplit(dimer$Primer.dimer, " & ") %>% unlist() %>% sub(pattern = "\\_3p|\\_5p|\\_fp|\\_rp", replacement = "") %>% unique()
+  nsa_primers <- strsplit(nsa$NSA.pair, " & ") %>% unlist() %>% sub(pattern = "\\_3p|\\_5p|\\_fp|\\_rp", replacement = "") %>% unique()
+  ps_primers <- ps$Primer
+  bad <- rbind(data.frame(primer=setdiff(union(dimer_primers, nsa_primers), ps_primers), sample="only dimer/nsa"),
+    data.frame(primer=setdiff(all_primers, union(ps_primers,union(dimer_primers, nsa_primers))),sample="not found"))
+  colnames(bad)[2] <- sample
+  if (nrow(bad_df) == 0){
+    bad_df <- bad
+  } else {
+    bad_df <- merge(bad_df, bad, all=T)
+  }
+}
+rownames(dimer_df) <- dimer_df[,1]
+dimer_df <- dimer_df[,-1]
+dimer_df <- dimer_df[order(apply(dimer_df,1,sum,na.rm=T),decreasing = T),]
+dimer_df <- dimer_df[apply(dimer_df,1,max,na.rm=T) >= 100,]
+
+rownames(nsa_df) <- nsa_df[,1]
+nsa_df <- nsa_df[,-1]
+nsa_df <- nsa_df[order(apply(nsa_df,1,sum,na.rm=T),decreasing = T),]
+nsa_df <- nsa_df[apply(nsa_df,1,max,na.rm=T) >= 100,]
+
+rownames(ps_df) <- ps_df[,1]
+ps_df <- ps_df[,-1]
+ps_df <- ps_df[order(rownames(ps_df)),]
+
+rownames(bad_df) <- bad_df[,1]
+bad_df <- bad_df[,-1]
+
+amplicon_tbl <- rbind(dimer_df, nsa_df, ps_df, bad_df)
+
+kable(amplicon_tbl, caption = "Amplicon statistics", format="html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F) %>%
+  group_rows("Dimer (at least one sample >= 100)", 1, nrow(dimer_df)) %>%
+  group_rows("Non-specific amplicon (at least one sample >= 100)", nrow(dimer_df)+1, nrow(dimer_df)+nrow(nsa_df)) %>%
+  group_rows("Amplicon product stats", nrow(dimer_df)+nrow(nsa_df)+1, nrow(dimer_df)+nrow(nsa_df)+nrow(ps_df)) %>%
+  group_rows("Failed primer stats", nrow(dimer_df)+nrow(nsa_df)+nrow(ps_df)+1, nrow(amplicon_tbl))
+```
+
+## 测序数据序列比对
+将测序数据经过接头序列清理、低质量碱基清理[^1]、引物序列清理[^2]后，将序列与参考序列进行比对。比对使用的是长序列（大于70碱基）比对工具minimap2[^3]。
+
+[^1]: An ultra-fast all-in-one FASTQ preprocessor: [fastp](https://github.com/OpenGene/fastp), Shifu Chen, Yanqing Zhou, Yaru Chen, Jia Gu. fastp: an ultra-fast all-in-one FASTQ preprocessor. bioRxiv 274100; doi: https://doi.org/10.1101/274100
+[^2]: [cutPrimers](https://github.com/ray1919/cutPrimers) trimming primer sequences from amplicon based NGS reads
+[^3]: A versatile pairwise aligner for genomic and spliced nucleotide sequences https://lh3.github.io/minimap2, Li, H. (2017). Minimap2: fast pairwise alignment for long nucleotide sequences. arXiv:1708.01492
+
