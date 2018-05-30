@@ -1,31 +1,34 @@
 # Author: Zhao
 # Date: 2018-04-11
 # Purpose: 将VCF文件转为表格，并给出等位基因频率
+# Update: 针对forcedGT输出的vcf做格式化
 library(dplyr)
+library(naturalsort)
 # library(openxlsx)
+# 
+# args <- "variant/results/variants/reduced.vcf"
+# args[2] <- "memo/normalized.3.vcf.gz"
 
 # ( grep -v '^##' vcf_file | sed 's/^#//' ) > reduced.vcf
 options(stringsAsFactors = F)
 args <- commandArgs(TRUE)
-if (length(args)==0) {
+if (length(args)<2) {
   stop("reduced vcf file must be supplied (input file).", call.=FALSE)
-} else if (length(args)==1) {
+} else if (length(args)==2) {
   # default output file
-  args[2] = sub(pattern = "\\w+.vcf$", replacement = "", x = args[1])
+  args[3] = sub(pattern = ".vcf$", replacement = ".txt", x = args[1])
 }
 
-VCF <- read.delim(args[1], stringsAsFactors=FALSE, sep = "\t", comment.char = "#",header = T)
+VCF <- read.delim(args[1], stringsAsFactors=FALSE, sep = "\t", header = T)
+GT <- read.delim(args[2], stringsAsFactors=FALSE, sep = "\t", header = F, comment.char = "#")
 
 # colnames(VCF) <- c("CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", paste("SAMPLE", 1:(ncol(VCF) - 9), sep = ""))
+colnames(GT) <- c("CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO")
 
-out_tbl <- VCF[,c("ID", "CHROM", "POS", "REF", "ALT", "QUAL", "FILTER")]
+# cols <- c("GT", "GT", "AD", "AD")
+cols <- c("GT", "GT", "AD", "AD", "DP")
+out_tbl <- VCF[,c("CHROM", "POS", "REF", "ALT", "QUAL", "FILTER")]
 
-cols <- c("GT", "GT", "AD", "AD", "GQX")
-cols <- c("GT", "GT", "AD", "AD")
-
-# long version: one variant one sample per line
-long_tbl <- data.frame()
-wide_tbl <- out_tbl
 for (i in (match("FORMAT", colnames(VCF))+1):ncol(VCF)) {
   format <- strsplit(VCF[,match("FORMAT", colnames(VCF))], ":")
   fd <- strsplit(VCF[,i], ":")
@@ -48,15 +51,16 @@ for (i in (match("FORMAT", colnames(VCF))+1):ncol(VCF)) {
       df[j,sample] <- gsub(pattern = as.character(k), replacement = as[k+1], x = df[j,sample])
     }
   }
-  wide_tbl <- cbind(wide_tbl, df)
-  df$sample <- colnames(df)[1]
-  colnames(df)[1] <- "GT_nt"
-  long_tbl <- rbind(long_tbl, df)
+  df$AD_PCT[is.na(df$AD)] <- 1L
+  df$AD[is.na(df$AD)] <- df$DP[is.na(df$AD)]
+  out_tbl <- cbind(out_tbl, df)
 }
 
-wide_tbl <- wide_tbl[wide_tbl$FILTER == "PASS",]
-long_tbl <- cbind(out_tbl, long_tbl)
-long_tbl <- long_tbl[long_tbl$FILTER == "PASS",]
 
-write.table(wide_tbl, paste(args[2],"wide.txt", sep = ""), row.names = F, col.names = T, sep = "\t", quote = F)
-write.table(long_tbl, paste(args[2],"long.txt", sep = ""), row.names = F, col.names = T, sep = "\t", quote = F)
+# asign rs id
+merge_id_tbl <- merge(out_tbl[,1:2],GT[,1:3],all=T) %>% unique()
+
+merge_tbl <- merge(out_tbl, merge_id_tbl[!is.na(merge_id_tbl$ID),], all.x = F, all.y = T)
+merge_tbl <- merge_tbl[naturalorder(merge_tbl$CHROM),]
+
+write.table(merge_tbl, args[3], row.names = F, col.names = T, sep = "\t", quote = F)

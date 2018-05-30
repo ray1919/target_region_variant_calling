@@ -2,9 +2,9 @@
 title: "Variant calling quality control report"
 output: html_document
 params:
-  outdir: "../output1524637425"
-  primer_file: "../primers.fa"
-  gene_file: "../gene.txt"
+  outdir: "../jx_240518_mix2/test10"
+  primer_file: "../jx_240518_mix2/primers_addGC.fa"
+  gene_file: "../jx_240518_mix2/gene_list.txt"
 ---
 
 ## 原始数据质量控制
@@ -32,22 +32,29 @@ library(knitr)
 library(kableExtra) # https://cran.r-project.org/web/packages/kableExtra/vignettes/awesome_table_in_html.html
 library(ggplot2)
 library(Biostrings)
+library(reshape)
+library(openxlsx)
 options(stringsAsFactors = F)
+wd <- getwd()
 fastpdir <- paste(params$outdir,"fastp/",sep = "/")
 samples = dir(path = fastpdir)
 primers <- readDNAStringSet(params$primer_file)
 all_primers <- sub("\\_3p|\\_5p|\\_fp|\\_rp", "", names(primers)) %>% unique()
 genes <- readLines(params$gene_file)
+
+wb <- createWorkbook(creator="Acebiox Inc.")
+
 ```
 
 
-本次数据共计`r length(samples)`个样本。原始数据统计如下：
+本次数据共计`r length(samples)`个样本。原始数据统计如下，同附件工作表1：
 ```{r echo=FALSE, results='asis'}
 compress <- function(tx) {
   tx <- as.numeric(gsub("\\,", "", tx))
-  int <- c(1e-2, 1, 1e3, 1e6, 1e9, 1e12)
+  int <- c(1e-4, 1, 1e3, 1e6, 1e9, 1e12)
   div <- findInterval(tx, int)
-  paste(round( tx/int[div], 2), c("%","", "K","M","B","T")[div] )
+  divisor <- c(1, 1e-2, 1, 1e3, 1e6, 1e9, 1e12) 
+  paste(round( tx/divisor[div+1], 2), c("","%","", "K","M","B","T")[div+1] )
 }
 
 quality_curves <- data.frame()
@@ -80,6 +87,15 @@ for(i in 1:nrow(summary_tbl)) {
   summary_tbl[i,] <- compress(summary_tbl[i,])
 }
 
+addWorksheet(wb, sheetName = "preprocess summary")
+writeData(wb, sheet = 1, startRow = 1, x = "Before filtering")
+writeDataTable(wb, sheet = 1, startRow = 2, x = as.data.frame(summary_before_filtering), colNames = T, rowNames = T)
+writeData(wb, sheet = 1, startRow = 8, x = "After filtering")
+writeDataTable(wb, sheet = 1, startRow = 9, x = as.data.frame(summary_after_filtering), colNames = T, rowNames = T)
+writeData(wb, sheet = 1, startRow = 15, x = "Filtering result")
+writeDataTable(wb, sheet = 1, startRow = 16, x = as.data.frame(summary_filtering_result), colNames = T, rowNames = T)
+setColWidths(wb, sheet = 1, widths = "auto", cols = 1:3)
+
 kable(summary_tbl, caption = "Quality control summary", format="html", digits=0) %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F) %>%
   group_rows("Before filtering", 1, 5) %>%
@@ -94,7 +110,7 @@ ggplot(data=quality_curves, aes(x=position, y=quality, color=sample)) +
 ```
 
 ## 扩增片段质量控制
-基于片段扩增的测序是针对引物扩增片段进行测序，通过检测引物序列可以检测测序数据中，各个扩增片段的分布情况。此次实验共设计```r length(primers)/2```对PCR引物，检测```r length(genes)```个目标基因(```r paste(genes, sep=", ")```)。具体共计结果如下表：
+基于片段扩增的测序是针对引物扩增片段进行测序，通过检测引物序列可以检测测序数据中，各个扩增片段的分布情况。此次实验共设计```r length(primers)/2```对PCR引物，检测```r length(genes)```个目标基因(```r paste(genes, sep=", ")```)。具体共计结果如下表，详见附件工作表2-4：
 
 ```{r echo=FALSE, results='asis'}
 cutdir <- paste(params$outdir,"cutprimers/",sep = "/")
@@ -120,20 +136,23 @@ for (sample in samples) {
   }
   
   ps <- read.table(paste(cutdir, sample, "/", "ps.txt", sep = ""), sep = "\t",header = T)
-  ps$Primer <- sub("\\_3p|\\_5p|\\_fp|\\_rp", "",ps$Primer,ignore.case = T)
-  ps <- ps[!duplicated(ps$Primer),]
-  colnames(ps)[2] <- sample
+  # ps$Primer <- sub("\\_3p|\\_5p|\\_fp|\\_rp", "",ps[,1:2],ignore.case = T)
+  # ps <- ps[!duplicated(ps$Primer),]
+  colnames(ps)[3] <- sample
   if (nrow(ps_df) == 0){
-    ps_df <- ps[,1:2]
+    ps_df <- ps[,1:3]
   } else {
-    ps_df <- merge(ps_df, ps[,1:2], all=T)
+    ps_df <- merge(ps_df, ps[,1:3], all=T)
   }
   
   dimer_primers <- strsplit(dimer$Primer.dimer, " & ") %>% unlist() %>% sub(pattern = "\\_3p|\\_5p|\\_fp|\\_rp", replacement = "") %>% unique()
   nsa_primers <- strsplit(nsa$NSA.pair, " & ") %>% unlist() %>% sub(pattern = "\\_3p|\\_5p|\\_fp|\\_rp", replacement = "") %>% unique()
-  ps_primers <- ps$Primer
-  bad <- rbind(data.frame(primer=setdiff(union(dimer_primers, nsa_primers), ps_primers), sample="only dimer/nsa"),
-    data.frame(primer=setdiff(all_primers, union(ps_primers,union(dimer_primers, nsa_primers))),sample="not found"))
+  ps_primers <- sub("\\_3p|\\_5p|\\_fp|\\_rp", "",unlist(ps[,1:2]),ignore.case = T)
+  
+  dimer_nsa_primers <- setdiff(union(dimer_primers, nsa_primers), ps_primers)
+  not_found_primers <- setdiff(all_primers, union(ps_primers,union(dimer_primers, nsa_primers)))
+
+  bad <- data.frame(Status=c("only dimer/nsa", "primer not found"),sample=c(paste(dimer_nsa_primers, collapse = ","),paste(not_found_primers, collapse = ",")))
   colnames(bad)[2] <- sample
   if (nrow(bad_df) == 0){
     bad_df <- bad
@@ -151,27 +170,69 @@ nsa_df <- nsa_df[,-1]
 nsa_df <- nsa_df[order(apply(nsa_df,1,sum,na.rm=T),decreasing = T),]
 nsa_df <- nsa_df[apply(nsa_df,1,max,na.rm=T) >= 100,]
 
-rownames(ps_df) <- ps_df[,1]
-ps_df <- ps_df[,-1]
+rownames(ps_df) <- paste(ps_df[,1],ps_df[,2],sep = "-")
+ps_df <- ps_df[,-(1:2)]
 ps_df <- ps_df[order(rownames(ps_df)),]
 
 rownames(bad_df) <- bad_df[,1]
 bad_df <- bad_df[,-1]
 
-amplicon_tbl <- rbind(dimer_df, nsa_df, ps_df, bad_df)
+addWorksheet(wb, sheetName = "dimer summary")
+writeDataTable(wb, sheet = 2, x = dimer_df, colNames = T, rowNames = T)
+setColWidths(wb, sheet = 2, widths = "auto", cols = 1:3)
+addWorksheet(wb, sheetName = "NSA summary")
+writeDataTable(wb, sheet = 3, x = nsa_df, colNames = T, rowNames = T)
+setColWidths(wb, sheet = 3, widths = "auto", cols = 1:3)
+addWorksheet(wb, sheetName = "product summary")
+writeDataTable(wb, sheet = 4, x = ps_df, colNames = T, rowNames = T)
+setColWidths(wb, sheet = 4, widths = "auto", cols = 1:3)
+
+ps_correct_df <- ps_df[sapply(strsplit(rownames(ps_df), "_|-"), function(x){return(x[1] == x[3] & x[2] == "5p")}),]
+amplicon_tbl <- rbind(dimer_df, nsa_df, ps_correct_df, bad_df)
 
 kable(amplicon_tbl, caption = "Amplicon statistics", format="html") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F) %>%
   group_rows("Dimer (at least one sample >= 100)", 1, nrow(dimer_df)) %>%
   group_rows("Non-specific amplicon (at least one sample >= 100)", nrow(dimer_df)+1, nrow(dimer_df)+nrow(nsa_df)) %>%
-  group_rows("Amplicon product stats", nrow(dimer_df)+nrow(nsa_df)+1, nrow(dimer_df)+nrow(nsa_df)+nrow(ps_df)) %>%
-  group_rows("Failed primer stats", nrow(dimer_df)+nrow(nsa_df)+nrow(ps_df)+1, nrow(amplicon_tbl))
+  group_rows("Amplicon product stats", nrow(dimer_df)+nrow(nsa_df)+1, nrow(dimer_df)+nrow(nsa_df)+nrow(ps_correct_df)) %>%
+  group_rows("Failed primer stats", nrow(dimer_df)+nrow(nsa_df)+nrow(ps_correct_df)+1, nrow(amplicon_tbl))
 ```
 
 ## 测序数据序列比对
-将测序数据经过接头序列清理、低质量碱基清理[^1]、引物序列清理[^2]后，将序列与参考序列进行比对。比对使用的是长序列（大于70碱基）比对工具minimap2[^3]。
+将测序数据经过接头序列清理、低质量碱基清理[^1]、引物序列清理[^2]后，将序列与参考序列进行比对。比对使用的是长序列（大于70碱基）比对工具minimap2[^3]。对目标基因的所有编码外显子区域进行reads覆盖统计，结果见下表，同附件工作表5：
+
+```{r echo=FALSE, results='asis'}
+coverage_tbl <- read.table(paste(params$outdir, "/coverage.txt", sep = ""), sep = "\t",header = T, comment.char = "")
+
+addWorksheet(wb, sheetName = "coverage summary")
+writeDataTable(wb, sheet = 5, x = coverage_tbl, colNames = T, rowNames = F)
+setColWidths(wb, sheet = 5, widths = "auto", cols = 1:11)
+
+kable(cast(coverage_tbl, sample~gene, value = "percentcovered"), caption = "Sample / Gene percent covered", format="html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+```
+
+## 突变发现与分析
+根据测序数据比对的结果，以参考基因组（*Homo sapiens* assembly hg38）为模板进行突变发现与分析。突变分析使用Strelka2 Small Variant Caller[^4]。在目标基因区域进行突变发现，并对潜在突变做质控统计，标记数据质量较差的突变结果——如深度太低（read depth小于3），基因分型分数过低等。一下为第一个样本的突变结果，全部结果详见附件工作表6-7：
+
+```{r echo=FALSE, results='asis'}
+wide_tbl <- read.table(paste(params$outdir, "/variant/results/variants/wide.txt", sep = ""), sep = "\t",header = T)
+long_tbl <- read.table(paste(params$outdir, "/variant/results/variants/long.txt", sep = ""), sep = "\t",header = T)
+
+addWorksheet(wb, sheetName = "variant column")
+writeDataTable(wb, sheet = 6, x = wide_tbl, colNames = T, rowNames = F)
+setColWidths(wb, sheet = 6, widths = "auto", cols = 1:ncol(wide_tbl))
+addWorksheet(wb, sheetName = "variant row")
+writeDataTable(wb, sheet = 7, x = long_tbl, colNames = T, rowNames = F)
+setColWidths(wb, sheet = 7, widths = "auto", cols = 1:ncol(long_tbl))
+
+saveWorkbook(wb, paste(params$outdir,"qcreport.xlsx",sep = "/"), overwrite = T)
+
+kable(wide_tbl[,1:11], caption = "Sample / Gene percent covered", format="html") %>%
+  kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+```
 
 [^1]: An ultra-fast all-in-one FASTQ preprocessor: [fastp](https://github.com/OpenGene/fastp), Shifu Chen, Yanqing Zhou, Yaru Chen, Jia Gu. fastp: an ultra-fast all-in-one FASTQ preprocessor. bioRxiv 274100; doi: https://doi.org/10.1101/274100
 [^2]: [cutPrimers](https://github.com/ray1919/cutPrimers) trimming primer sequences from amplicon based NGS reads
 [^3]: A versatile pairwise aligner for genomic and spliced nucleotide sequences https://lh3.github.io/minimap2, Li, H. (2017). Minimap2: fast pairwise alignment for long nucleotide sequences. arXiv:1708.01492
-
+[^4]: Kim, S., Scheffler, K. et al. (2017) Strelka2: Fast and accurate variant calling for clinical sequencing applications. bioRxiv doi: 10.1101/192872
