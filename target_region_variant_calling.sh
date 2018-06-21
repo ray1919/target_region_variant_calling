@@ -171,9 +171,7 @@ for s in `cat $sample_file`; do
 done
 
 if [[ -d ${outDir} ]]; then
-    if ${force} ; then
-        rm -r ${outDir}
-    else
+    if ! ${force} ; then
         echo "outDir ${outDir} already exists."
         echo "existed files would be skipped."
         while true ; do
@@ -260,8 +258,9 @@ if [[ ! -z ${primer_file+x} ]]; then
                 -utr1 $CUTDIR/r1_untrimmed.fastq.gz \
                 -utr2 $CUTDIR/r2_untrimmed.fastq.gz \
                 --identify-dimers $CUTDIR/dimer.txt \
-                -insa $CUTDIR/nsa.txt --error-number 4 \
+                -insa $CUTDIR/nsa.txt --error-number 3 \
                 --primersStatistics $CUTDIR/ps.txt \
+                --min-primer3-length 6 \
                 --primer-location-buffer 0 \
                 --primer3-absent -rnsa \
                 --threads ${threads} 2>&1 | tee $CUTDIR/log.txt
@@ -277,8 +276,11 @@ if [[ ! -z ${primer_file+x} ]]; then
         mkdir -p ${ALNDIR}
         if [[ ! -e ${ALNDIR}/${sample}.aligned.sorted.bam ]]; then
             STRING=$(head -n 1 < <(zcat $CUTDIR/${sample}_R1.fastq.gz))
-            RGPU=`cut -f3-4 -d: <<< $STRING`
-            RGID=`cut -f2-4 -d: <<< $STRING`
+            # https://gatkforums.broadinstitute.org/gatk/discussion/6472/read-groups
+            # {FLOWCELL_BARCODE}.{LANE}.{SAMPLE_BARCODE}
+            RGPU=`cut -f3-4,10 -d: <<< $STRING`
+            # flowcell + lane + library
+            RGID=`cut -f3-4 -d: <<< $STRING`.$sample
             index_file="${ref_fasta%.*}.mmi"
             minimap2 -ax sr -k15 -A2 -B4 -O6,24 -E2,1 \
                 -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
@@ -290,6 +292,9 @@ if [[ ! -z ${primer_file+x} ]]; then
                 $ALNDIR/${sample}.aligned.unsorted.sam \
                 -o $ALNDIR/${sample}.aligned.sorted.bam
             samtools index $ALNDIR/${sample}.aligned.sorted.bam
+            rm -f $ALNDIR/${sample}.aligned.unsorted.sam
+            # samtools rmdup --reference ${ref_fasta} $ALNDIR/${sample}.aligned.sorted.bam $ALNDIR/${sample}.dedup.bam
+            # samtools index $ALNDIR/${sample}.dedup.bam
         fi
     done
 else
@@ -312,6 +317,9 @@ else
                 $ALNDIR/${sample}.aligned.unsorted.sam \
                 -o $ALNDIR/${sample}.aligned.sorted.bam
             samtools index $ALNDIR/${sample}.aligned.sorted.bam
+            rm -f $ALNDIR/${sample}.aligned.unsorted.sam
+            # samtools rmdup --reference ${ref_fasta} $ALNDIR/${sample}.aligned.sorted.bam $ALNDIR/${sample}.dedup.bam
+            # samtools index $ALNDIR/${sample}.dedup.bam
         fi
     done
 fi
@@ -335,13 +343,13 @@ if [[ -e ${cov_file} ]]; then
         bamstats05 --filter "" \
             -B ${cov_file} \
             -o ${outDir}/coverage.txt \
-            $outDir/alignment/*/*.aligned.sorted.bam \
+            $outDir/alignment/*/*.sorted.bam \
             2>&1 | tee -a ${logFile}
     fi
 fi
 
 ##Step6: variant calling
-BAMS=($outDir/alignment/*/*.aligned.sorted.bam)
+BAMS=($outDir/alignment/*/*.sorted.bam)
 function join_by { local IFS="$1"; shift; echo "$*"; }
 BAMSP=(${BAMS[@]/#/--bam=})
 SAMPLES=$(join_by ' ' ${BAMSP[@]})
