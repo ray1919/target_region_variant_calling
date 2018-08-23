@@ -16,6 +16,8 @@ if (length(args)==0) {
 
 VCF <- read.delim(args[1], stringsAsFactors=FALSE, sep = "\t", comment.char = "#",header = T)
 
+VCF <- VCF[VCF$QUAL >=200 & VCF$FILTER == "PASS", ]
+
 # colnames(VCF) <- c("CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", paste("SAMPLE", 1:(ncol(VCF) - 9), sep = ""))
 
 out_tbl <- VCF[,c("ID", "CHROM", "POS", "REF", "ALT", "QUAL", "FILTER")]
@@ -51,13 +53,13 @@ for (i in (match("FORMAT", colnames(VCF))+1):ncol(VCF)) {
   wide_tbl <- cbind(wide_tbl, df)
   # df$SAMPLE <- colnames(df)[1]
   df <- cbind(data.frame(SAMPLE=colnames(df)[1]), df)
-  colnames(df)[1] <- "GT_nt"
+  colnames(df)[2] <- "GT_nt"
   long_tbl <- rbind(long_tbl, df)
 }
 
-wide_tbl <- wide_tbl[wide_tbl$FILTER == "PASS" & wide_tbl$QUAL >= 200,]
+# wide_tbl <- wide_tbl[wide_tbl$FILTER == "PASS" & wide_tbl$QUAL >= 200,]
 long_tbl <- cbind(out_tbl, long_tbl)
-long_tbl <- long_tbl[long_tbl$FILTER == "PASS" & long_tbl$QUAL >= 200,]
+# long_tbl <- long_tbl[long_tbl$FILTER == "PASS" & long_tbl$QUAL >= 200,]
 
 write.table(wide_tbl, paste(args[2],"wide.txt", sep = ""), row.names = F, col.names = T, sep = "\t", quote = F)
 write.table(long_tbl, paste(args[2],"long.txt", sep = ""), row.names = F, col.names = T, sep = "\t", quote = F)

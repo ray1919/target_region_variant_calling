@@ -272,22 +272,31 @@ fi
 if [[ ! -z ${primer_file+x} ]]; then
     for sample in `cat ${sample_file}`; do
         CUTDIR=$outDir/cutprimers/${sample}
-        ALNDIR=$outDir/alignment/${sample}
+        ALNDIR=$outDir/alignment
         mkdir -p ${ALNDIR}
         if [[ ! -e ${ALNDIR}/${sample}.aligned.sorted.bam ]]; then
             STRING=$(head -n 1 < <(zcat $CUTDIR/${sample}_R1.fastq.gz))
             # https://gatkforums.broadinstitute.org/gatk/discussion/6472/read-groups
             # {FLOWCELL_BARCODE}.{LANE}.{SAMPLE_BARCODE}
-            RGPU=`cut -f3-4,10 -d: <<< $STRING`
+            RGPU=`cut -f3-4,10 -d: <<< $STRING | cut -f1 -d' '`
             # flowcell + lane + library
             RGID=`cut -f3-4 -d: <<< $STRING`.$sample
-            index_file="${ref_fasta%.*}.mmi"
-            minimap2 -ax sr -k15 -A2 -B4 -O6,24 -E2,1 \
+            if [[ -z ${vcf_file+x} ]]; then
+              index_file="${ref_fasta%.*}.mmi"
+              minimap2 -ax sr \
                 -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
                 $index_file \
                 $CUTDIR/${sample}_R1.fastq.gz \
                 $CUTDIR/${sample}_R2.fastq.gz \
                 > $ALNDIR/${sample}.aligned.unsorted.sam
+            else
+              bwa mem -t ${threads} \
+                -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
+                ${ref_fasta} \
+                $CUTDIR/${sample}_R1.fastq.gz \
+                $CUTDIR/${sample}_R2.fastq.gz \
+                > $ALNDIR/${sample}.aligned.unsorted.sam
+            fi
             samtools sort --threads ${threads} -m 2G \
                 $ALNDIR/${sample}.aligned.unsorted.sam \
                 -o $ALNDIR/${sample}.aligned.sorted.bam
@@ -300,19 +309,29 @@ if [[ ! -z ${primer_file+x} ]]; then
 else
     for sample in `cat ${sample_file}`; do
         fastp_dir=$outDir/fastp/$sample
-        ALNDIR=$outDir/alignment/${sample}
+        ALNDIR=$outDir/alignment
         mkdir -p ${ALNDIR}
         if [[ ! -e ${ALNDIR}/${sample}.aligned.sorted.bam ]]; then
             STRING=$(head -n 1 < <(zcat $fastp_dir/${sample}_r1.fq.gz ))
-            RGPU=`cut -f3-4 -d: <<< $STRING`
-            RGID=`cut -f2-4 -d: <<< $STRING`
-            index_file="${ref_fasta%.*}.mmi"
-            minimap2 -ax sr \
+            RGPU=`cut -f3-4,10 -d: <<< $STRING | cut -f1 -d' '`
+            # flowcell + lane + library
+            RGID=`cut -f3-4 -d: <<< $STRING`.$sample
+            if [[ -z ${vcf_file+x} ]]; then
+              index_file="${ref_fasta%.*}.mmi"
+              minimap2 -ax sr \
                 -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
                 $index_file \
                 $fastp_dir/${sample}_r1.fq.gz \
                 $fastp_dir/${sample}_r2.fq.gz \
-                > $ALNDIR/${sample}.aligned.unsorted.sam \
+                > $ALNDIR/${sample}.aligned.unsorted.sam
+            else
+              bwa mem -t ${threads} \
+                -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
+                ${ref_fasta} \
+                $fastp_dir/${sample}_r1.fq.gz \
+                $fastp_dir/${sample}_r2.fq.gz \
+                > $ALNDIR/${sample}.aligned.unsorted.sam
+            fi
             samtools sort --threads ${threads} -m 2G \
                 $ALNDIR/${sample}.aligned.unsorted.sam \
                 -o $ALNDIR/${sample}.aligned.sorted.bam
@@ -339,17 +358,17 @@ fi
 #    fi
 #fi
 if [[ -e ${cov_file} ]]; then
-    if [[ ! -e ${outDir}/coverage.txt ]]; then
-        bamstats05 --filter "" \
+    if [[ ! -e ${outDir}/coverage_MAPQ20.txt ]]; then
+        bamstats05 --filter "mapqlt(20) || MapQUnavailable() || Duplicate() || FailsVendorQuality() || NotPrimaryAlignment() || SupplementaryAlignment()" \
             -B ${cov_file} \
-            -o ${outDir}/coverage.txt \
-            $outDir/alignment/*/*.sorted.bam \
+            -o ${outDir}/coverage_MAPQ20.txt \
+            $outDir/alignment/*.sorted.bam \
             2>&1 | tee -a ${logFile}
     fi
 fi
 
 ##Step6: variant calling
-BAMS=($outDir/alignment/*/*.sorted.bam)
+BAMS=($outDir/alignment/*.sorted.bam)
 function join_by { local IFS="$1"; shift; echo "$*"; }
 BAMSP=(${BAMS[@]/#/--bam=})
 SAMPLES=$(join_by ' ' ${BAMSP[@]})
@@ -363,19 +382,36 @@ if [[ ! -z ${vcf_file+x} ]]; then
     forcedGT="--forcedGT ${vcf_file}"
 fi
 
-VARDIR=$outDir/variant
-if [[ ! -e ${VARDIR}/runWorkflow.py ]]; then
-    cmd="configureStrelkaGermlineWorkflow.py --targeted \
-        --referenceFasta ${ref_fasta} \
-        ${callRegions} ${forcedGT} \
-        ${SAMPLES} \
-        --runDir ${VARDIR} 2>&1 | tee -a ${logFile}"
-    eval ${cmd}
-fi
+# if [[ ! -z ${vcf_file+x} ]]; then
+#   dotnet ~/ct208/tool/pisces/Pisces_5.2.7.47/Pisces.dll \
+#     -g /opt/data/db/genome/pisces/Homo_sapiens_BD_hg38/ \
+#     --bam $outDir/alignment \
+#     --outfolder $outDir/pisces \
+#     --ploidy diploid \
+#     --intervalpaths ${bed_file} \
+#     --forcedalleles $vcf_file \
+#     --crushvcf false \
+#     --callmnvs true \
+#     --minmapquality 0 \
+#     --maxgapbetweenmnv 3 \
+#     --maxmnvlength 6
+#   echo STOP HERE `date`
+#   exit
+# else
+  VARDIR=$outDir/variant
+  if [[ ! -e ${VARDIR}/runWorkflow.py ]]; then
+      cmd="configureStrelkaGermlineWorkflow.py --targeted \
+          --referenceFasta ${ref_fasta} \
+          ${callRegions} ${forcedGT} \
+          ${SAMPLES} \
+          --runDir ${VARDIR} 2>&1 | tee -a ${logFile}"
+      eval ${cmd}
+  fi
 
-if [[ ! -e ${VARDIR}/log.txt ]]; then
-    ${VARDIR}/runWorkflow.py -j ${threads} -m local 2>&1 | tee ${VARDIR}/log.txt
-fi
+  if [[ ! -e ${VARDIR}/log.txt ]]; then
+      ${VARDIR}/runWorkflow.py -j ${threads} -m local 2>&1 | tee ${VARDIR}/log.txt
+  fi
+# fi
 
 ##Step7: vcf annotate & convert
 RESDIR=${VARDIR}/results/variants

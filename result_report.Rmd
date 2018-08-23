@@ -106,7 +106,7 @@ kable(summary_tbl, caption = "Quality control summary", format="html", digits=0)
 ```{r echo=FALSE, results='asis', fig.align="center", fig.cap="Before filtering quality curves"}
 ggplot(data=quality_curves, aes(x=position, y=quality, color=sample)) +
   geom_line() +
-  theme_bw()# + theme(legend.position="none")
+  theme_bw() + theme(legend.position="none")
 ```
 
 ## 测序数据序列比对
@@ -120,9 +120,9 @@ coverage_tbl$start <- coverage_tbl$start + 1
 
 gene_pos_tbl <- coverage_tbl[coverage_tbl$sample == coverage_tbl$sample[1], c("X.chrom", "start", "end", "gene")]
 
-# additional
-coverage_tbl$nocoverage.bp[coverage_tbl$gene == "OCLN"] <- apply(data.frame(a=coverage_tbl$nocoverage.bp[coverage_tbl$gene == "OCLN"] - 14,b=0),MARGIN = 1, max)
-coverage_tbl$percentcovered[coverage_tbl$gene == "OCLN"] <- round((coverage_tbl$length[coverage_tbl$gene == "OCLN"] - coverage_tbl$nocoverage.bp[coverage_tbl$gene == "OCLN"]) / coverage_tbl$length[coverage_tbl$gene == "OCLN"] * 100, digits = 1)
+# additional cheat
+# coverage_tbl$nocoverage.bp[coverage_tbl$gene == "OCLN"] <- apply(data.frame(a=coverage_tbl$nocoverage.bp[coverage_tbl$gene == "OCLN"] - 14,b=0),MARGIN = 1, max)
+# coverage_tbl$percentcovered[coverage_tbl$gene == "OCLN"] <- round((coverage_tbl$length[coverage_tbl$gene == "OCLN"] - coverage_tbl$nocoverage.bp[coverage_tbl$gene == "OCLN"]) / coverage_tbl$length[coverage_tbl$gene == "OCLN"] * 100, digits = 1)
 
 addWorksheet(wb, sheetName = "COVERAGE")
 writeDataTable(wb, sheet = 2, x = coverage_tbl, colNames = T, rowNames = F)
@@ -130,6 +130,12 @@ setColWidths(wb, sheet = 2, widths = "auto", cols = 1:11)
 
 kable(cast(coverage_tbl, sample~gene, value = "percentcovered"), caption = "Sample / Gene percent covered", format="html") %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive"), full_width = F)
+```
+
+```{r echo=FALSE, results='asis', fig.align="center", fig.cap="Before filtering quality curves"}
+ggplot(data=coverage_tbl, aes(x=gene, y=avg, color=sample)) +
+  geom_boxplot() + 
+  theme_bw() + theme(legend.position="none")
 ```
 
 ## 突变发现与分析
