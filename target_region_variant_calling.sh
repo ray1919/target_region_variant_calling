@@ -87,6 +87,7 @@ force=false
 strict=false
 debug=false
 threads=4
+min_length=15
 args=()
 
 # Set Temp Directory
@@ -230,6 +231,7 @@ for sample in `cat ${sample_file}`; do
     mkdir -p $fastp_dir
     if [[ ! -e ${fastp_dir}/log.txt ]]; then
         fastp -z 3 -w ${threads} \
+            -l $min_length \
             -i ${data_dir}/${sample}_R1.fastq.gz \
             -I ${data_dir}/${sample}_R2.fastq.gz \
             -o $fastp_dir/${sample}_r1.fq.gz \
@@ -240,6 +242,9 @@ for sample in `cat ${sample_file}`; do
             --adapter_sequence ${adapter1} \
             --adapter_sequence_r2 ${adapter2} \
             2>&1 | tee ${fastp_dir}/log.txt
+        # if there is GC in both read1 and read2, trim them using following para
+        #   --trim_front1 2 \
+        #   --trim_tail1 2 \
     fi
 done
 
@@ -262,8 +267,9 @@ if [[ ! -z ${primer_file+x} ]]; then
                 --primersStatistics $CUTDIR/ps.txt \
                 --min-primer3-length 6 \
                 --primer-location-buffer 0 \
-                --primer3-absent -rnsa \
-                --threads ${threads} 2>&1 | tee $CUTDIR/log.txt
+                --primer3-absent -rnsa -notrim \
+                --threads 5 2>&1 | tee $CUTDIR/log.txt
+            #  -notrim -rnsa
         fi
     done
 fi
@@ -281,22 +287,22 @@ if [[ ! -z ${primer_file+x} ]]; then
             RGPU=`cut -f3-4,10 -d: <<< $STRING | cut -f1 -d' '`
             # flowcell + lane + library
             RGID=`cut -f3-4 -d: <<< $STRING`.$sample
-            if [[ -z ${vcf_file+x} ]]; then
-              index_file="${ref_fasta%.*}.mmi"
-              minimap2 -ax sr \
-                -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
-                $index_file \
-                $CUTDIR/${sample}_R1.fastq.gz \
-                $CUTDIR/${sample}_R2.fastq.gz \
-                > $ALNDIR/${sample}.aligned.unsorted.sam
-            else
+            #if [[ -z ${vcf_file+x} ]]; then
+            #  index_file="${ref_fasta%.*}.mmi"
+            #  minimap2 -ax sr \
+            #    -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
+            #    $index_file \
+            #    $CUTDIR/${sample}_R1.fastq.gz \
+            #    $CUTDIR/${sample}_R2.fastq.gz \
+            #    > $ALNDIR/${sample}.aligned.unsorted.sam
+            #else
               bwa mem -t ${threads} \
                 -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
                 ${ref_fasta} \
                 $CUTDIR/${sample}_R1.fastq.gz \
                 $CUTDIR/${sample}_R2.fastq.gz \
                 > $ALNDIR/${sample}.aligned.unsorted.sam
-            fi
+            #fi
             samtools sort --threads ${threads} -m 2G \
                 $ALNDIR/${sample}.aligned.unsorted.sam \
                 -o $ALNDIR/${sample}.aligned.sorted.bam
@@ -316,22 +322,22 @@ else
             RGPU=`cut -f3-4,10 -d: <<< $STRING | cut -f1 -d' '`
             # flowcell + lane + library
             RGID=`cut -f3-4 -d: <<< $STRING`.$sample
-            if [[ -z ${vcf_file+x} ]]; then
-              index_file="${ref_fasta%.*}.mmi"
-              minimap2 -ax sr \
-                -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
-                $index_file \
-                $fastp_dir/${sample}_r1.fq.gz \
-                $fastp_dir/${sample}_r2.fq.gz \
-                > $ALNDIR/${sample}.aligned.unsorted.sam
-            else
+            #if [[ -z ${vcf_file+x} ]]; then
+            #  index_file="${ref_fasta%.*}.mmi"
+            #  minimap2 -ax sr \
+            #    -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
+            #    $index_file \
+            #    $fastp_dir/${sample}_r1.fq.gz \
+            #    $fastp_dir/${sample}_r2.fq.gz \
+            #    > $ALNDIR/${sample}.aligned.unsorted.sam
+            #else
               bwa mem -t ${threads} \
                 -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
                 ${ref_fasta} \
                 $fastp_dir/${sample}_r1.fq.gz \
                 $fastp_dir/${sample}_r2.fq.gz \
                 > $ALNDIR/${sample}.aligned.unsorted.sam
-            fi
+            #fi
             samtools sort --threads ${threads} -m 2G \
                 $ALNDIR/${sample}.aligned.unsorted.sam \
                 -o $ALNDIR/${sample}.aligned.sorted.bam
@@ -358,6 +364,13 @@ fi
 #    fi
 #fi
 if [[ -e ${cov_file} ]]; then
+    if [[ ! -e ${outDir}/coverage_MAPQ0.txt ]]; then
+        bamstats05 --filter "" \
+            -B ${cov_file} \
+            -o ${outDir}/coverage_MAPQ0.txt \
+            $outDir/alignment/*.sorted.bam \
+            2>&1 | tee -a ${logFile}
+    fi
     if [[ ! -e ${outDir}/coverage_MAPQ20.txt ]]; then
         bamstats05 --filter "mapqlt(20) || MapQUnavailable() || Duplicate() || FailsVendorQuality() || NotPrimaryAlignment() || SupplementaryAlignment()" \
             -B ${cov_file} \
@@ -376,43 +389,43 @@ SAMPLES=$(join_by ' ' ${BAMSP[@]})
 if [[ ! -z ${bed_file+x} ]]; then
     # callRegions="--callRegions ${bed_file} --noCompress ${bed_file}"
     callRegions="--callRegions ${bed_file}"
+    intervalpaths="--intervalpaths ${bed_file}"
 fi
 
 if [[ ! -z ${vcf_file+x} ]]; then
     forcedGT="--forcedGT ${vcf_file}"
 fi
 
-# if [[ ! -z ${vcf_file+x} ]]; then
-#   dotnet ~/ct208/tool/pisces/Pisces_5.2.7.47/Pisces.dll \
-#     -g /opt/data/db/genome/pisces/Homo_sapiens_BD_hg38/ \
-#     --bam $outDir/alignment \
-#     --outfolder $outDir/pisces \
-#     --ploidy diploid \
-#     --intervalpaths ${bed_file} \
-#     --forcedalleles $vcf_file \
-#     --crushvcf false \
-#     --callmnvs true \
-#     --minmapquality 0 \
-#     --maxgapbetweenmnv 3 \
-#     --maxmnvlength 6
-#   echo STOP HERE `date`
-#   exit
-# else
-  VARDIR=$outDir/variant
-  if [[ ! -e ${VARDIR}/runWorkflow.py ]]; then
-      cmd="configureStrelkaGermlineWorkflow.py --targeted \
-          --referenceFasta ${ref_fasta} \
-          ${callRegions} ${forcedGT} \
-          ${SAMPLES} \
-          --runDir ${VARDIR} 2>&1 | tee -a ${logFile}"
-      eval ${cmd}
-  fi
+#if [[ ! -z ${vcf_file+x} ]]; then
+  dotnet ~/ct208/tool/pisces/Pisces_5.2.7.47/Pisces.dll \
+    -g /opt/data/db/genome/pisces/hg38_chrom \
+    --bam $outDir/alignment \
+    --outfolder $outDir/pisces \
+    --ploidy diploid \
+    --diploidgenotypeparameters 0.01,0.99,0.90 \
+    $intervalpaths \
+    --crushvcf true \
+    --callmnvs false \
+    --minmapquality 0 \
+    --minbasecallquality 20
+#else
+#  VARDIR=$outDir/variant
+#  if [[ ! -e ${VARDIR}/runWorkflow.py ]]; then
+#      cmd="configureStrelkaGermlineWorkflow.py --targeted \
+#          --referenceFasta ${ref_fasta} \
+#          ${callRegions} ${forcedGT} \
+#          ${SAMPLES} \
+#          --runDir ${VARDIR} 2>&1 | tee -a ${logFile}"
+#      eval ${cmd}
+#  fi
+#
+#  if [[ ! -e ${VARDIR}/log.txt ]]; then
+#      ${VARDIR}/runWorkflow.py -j ${threads} -m local 2>&1 | tee ${VARDIR}/log.txt
+#  fi
+#fi
 
-  if [[ ! -e ${VARDIR}/log.txt ]]; then
-      ${VARDIR}/runWorkflow.py -j ${threads} -m local 2>&1 | tee ${VARDIR}/log.txt
-  fi
-# fi
-
+  echo STOP HERE `date`
+  exit
 ##Step7: vcf annotate & convert
 RESDIR=${VARDIR}/results/variants
 if [[ -z ${vcf_file+x} ]]; then
@@ -461,6 +474,7 @@ This is pipeline script I use for variant calling in amplicon based sequencing d
   -b, --bed_file    bed file for calling variant in vcf file, must be bgzip/tabix
   -B, --cov_file    bed file for coverage statistics, using bamstat05
   -g, --gene_file   one gene symbol per line, should be official gene symbol
+  -L, --min_length  reads shorter than length_required will be discarded, default is 15. (int [=15])
   -t, --threads     threads to use, default: 4
   --force           Skip all user interaction.  Implied 'Yes' to all actions.
   -q, --quiet       Quiet (no output)
@@ -532,6 +546,7 @@ while [[ $1 = -?* ]]; do
     -b|--bed_file) shift; bed_file=${1} ;;
     -B|--cov_file) shift; cov_file=${1} ;;
     -t|--threads) shift; threads=${1} ;;
+    -L|--min_length) shift; min_length=${1} ;;
     -v|--verbose) verbose=true ;;
     -l|--log) printLog=true ;;
     -q|--quiet) quiet=true ;;

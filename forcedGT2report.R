@@ -25,7 +25,8 @@ GT <- read.delim(args[2], stringsAsFactors=FALSE, sep = "\t", header = F, commen
 # colnames(VCF) <- c("CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", paste("SAMPLE", 1:(ncol(VCF) - 9), sep = ""))
 colnames(GT) <- c("CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO")
 
-cols <- c("GT", "GT", "AD", "AD", "DP", "FT")
+# cols <- c("GT", "GT", "AD", "AD", "DP", "FT")
+cols <- c("GT", "GT", "AD", "AD", "DP")
 out_tbl <- VCF[,c("CHROM", "POS", "REF", "ALT", "QUAL", "FILTER")]
 
 # asign rs id

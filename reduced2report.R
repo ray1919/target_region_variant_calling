@@ -16,14 +16,14 @@ if (length(args)==0) {
 
 VCF <- read.delim(args[1], stringsAsFactors=FALSE, sep = "\t", comment.char = "#",header = T)
 
-VCF <- VCF[VCF$QUAL >=200 & VCF$FILTER == "PASS", ]
+VCF <- VCF[VCF$FILTER == "PASS", ]
 
 # colnames(VCF) <- c("CHROM", "POS", "ID", "REF", "ALT", "QUAL", "FILTER", "INFO", "FORMAT", paste("SAMPLE", 1:(ncol(VCF) - 9), sep = ""))
 
 out_tbl <- VCF[,c("ID", "CHROM", "POS", "REF", "ALT", "QUAL", "FILTER")]
 
 cols <- c("GT", "GT", "AD", "AD", "GQX")
-cols <- c("GT", "GT", "AD", "AD")
+cols <- c("GT", "GT", "AD", "AD","FT")
 
 # long version: one variant one sample per line
 long_tbl <- data.frame()
