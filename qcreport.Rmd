@@ -2,9 +2,9 @@
 title: "Variant calling quality control report"
 output: html_document
 params:
-  outdir: "output_b"
-  primer_file: "../jx_240518_mix2/primers_addGC.fa"
-  gene_file: "../jx_240518_mix2/gene_list.txt"
+  outdir: "/opt/data/db/sra/jx_161118_100samples/oprimer"
+  primer_file: "/opt/data/db/sra/jx_161118_100samples/memo/primers.fa"
+  gene_file: ""
 ---
 
 ## 原始数据质量控制
@@ -40,7 +40,7 @@ fastpdir <- paste(params$outdir,"fastp/",sep = "/")
 samples <- dir(path = fastpdir)
 primers <- readDNAStringSet(params$primer_file)
 all_primers <- sub("\\_3p|\\_5p|\\_fp|\\_rp", "", names(primers)) %>% unique()
-genes <- readLines(params$gene_file)
+# genes <- readLines(params$gene_file)
 
 wb <- createWorkbook(creator="Acebiox Inc.")
 

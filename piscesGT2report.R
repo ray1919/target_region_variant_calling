@@ -5,10 +5,15 @@
 # Add: 2018-08-15
 # - 输出wide和long两种格式结果
 # Rewrite: 解析所有单样本的pisces结果整理成表格。
+# Update: 2018-09-29
+# 整理外显子突变结果
 
 library(dplyr)
 library(naturalsort)
 # library(openxlsx)
+
+# miminal allele ratio
+MAR <- 0.2
 
 # ( grep -v '^##' vcf_file | sed 's/^#//' ) > reduced.vcf
 options(stringsAsFactors = F)
@@ -51,8 +56,19 @@ for (i in 1:length(vcf_files)) {
   colnames(df)[4] <- "AD_PCT"
   for (j in 1:nrow(df)) {
     ad <- strsplit(df[j,3], ",") %>% unlist %>% as.integer()
-    ad_pct <- format(round(ad / df[j,5], digits = 2), nsmall = 2)
+    ad_pct_num <- ad / df[j,5]
+    ad_pct <- format(round(ad_pct_num, digits = 2), nsmall = 2)
     df[j,"AD_PCT"] <- paste(ad_pct, collapse = ",")
+    
+    # determine GT
+    if (! is.nan(ad_pct_num)) {
+      if (min(ad_pct_num) < MAR & max(ad_pct_num) >= 1-MAR) {
+        GT_split <- strsplit(df[j,"GT"], "/") %>% unlist
+        df[j,"GT"] <- paste(rep(GT_split[ad_pct_num == max(ad_pct_num)],2), collapse = "/")
+        df[j,sample] <- df[j,"GT"]
+      }
+    }
+    
     as <- strsplit(paste(merge_id_tbl[j,c("REF", "ALT")],sep = ","), split = ",") %>% unlist
     for (k in 0:(length(as)-1)) {
       df[j,sample] <- gsub(pattern = as.character(k), replacement = as[k+1], x = df[j,sample])

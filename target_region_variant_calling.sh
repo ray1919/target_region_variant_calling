@@ -234,17 +234,17 @@ for sample in `cat ${sample_file}`; do
             -l $min_length \
             -i ${data_dir}/${sample}_R1.fastq.gz \
             -I ${data_dir}/${sample}_R2.fastq.gz \
-            -o $fastp_dir/${sample}_r1.fq.gz \
-            -O $fastp_dir/${sample}_r2.fq.gz \
+            -o $fastp_dir/${sample}_R1.fastq.gz \
+            -O $fastp_dir/${sample}_R2.fastq.gz \
             -j $fastp_dir/${sample}.json \
             -h $fastp_dir/${sample}.html \
             -R "${sample} QC report" \
+            --trim_front1 2 \
+            --trim_front2 2 \
             --adapter_sequence ${adapter1} \
             --adapter_sequence_r2 ${adapter2} \
             2>&1 | tee ${fastp_dir}/log.txt
         # if there is GC in both read1 and read2, trim them using following para
-        #   --trim_front1 2 \
-        #   --trim_tail1 2 \
     fi
 done
 
@@ -255,8 +255,8 @@ if [[ ! -z ${primer_file+x} ]]; then
         mkdir -p ${CUTDIR}
         fastp_dir=$outDir/fastp/$sample
         if [[ ! -e ${CUTDIR}/log.txt ]]; then
-            cutPrimers.py -r1 $fastp_dir/${sample}_r1.fq.gz \
-                -r2 $fastp_dir/${sample}_r2.fq.gz \
+            cutPrimers.py -r1 $fastp_dir/${sample}_R1.fastq.gz \
+                -r2 $fastp_dir/${sample}_R2.fastq.gz \
                 -pr ${primer_file} \
                 -tr1 $CUTDIR/${sample}_R1.fastq.gz \
                 -tr2 $CUTDIR/${sample}_R2.fastq.gz \
@@ -318,7 +318,7 @@ else
         ALNDIR=$outDir/alignment
         mkdir -p ${ALNDIR}
         if [[ ! -e ${ALNDIR}/${sample}.aligned.sorted.bam ]]; then
-            STRING=$(head -n 1 < <(zcat $fastp_dir/${sample}_r1.fq.gz ))
+            STRING=$(head -n 1 < <(zcat $fastp_dir/${sample}_R1.fastq.gz ))
             RGPU=`cut -f3-4,10 -d: <<< $STRING | cut -f1 -d' '`
             # flowcell + lane + library
             RGID=`cut -f3-4 -d: <<< $STRING`.$sample
@@ -327,15 +327,15 @@ else
             #  minimap2 -ax sr \
             #    -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
             #    $index_file \
-            #    $fastp_dir/${sample}_r1.fq.gz \
-            #    $fastp_dir/${sample}_r2.fq.gz \
+            #    $fastp_dir/${sample}_R1.fastq.gz \
+            #    $fastp_dir/${sample}_R2.fastq.gz \
             #    > $ALNDIR/${sample}.aligned.unsorted.sam
             #else
               bwa mem -t ${threads} \
                 -R "@RG\tID:$RGID\tSM:${sample}\tPL:ILLUMINA\tLB:${sample}\tPU:$RGPU" \
                 ${ref_fasta} \
-                $fastp_dir/${sample}_r1.fq.gz \
-                $fastp_dir/${sample}_r2.fq.gz \
+                $fastp_dir/${sample}_R1.fastq.gz \
+                $fastp_dir/${sample}_R2.fastq.gz \
                 > $ALNDIR/${sample}.aligned.unsorted.sam
             #fi
             samtools sort --threads ${threads} -m 2G \
@@ -389,25 +389,32 @@ SAMPLES=$(join_by ' ' ${BAMSP[@]})
 if [[ ! -z ${bed_file+x} ]]; then
     # callRegions="--callRegions ${bed_file} --noCompress ${bed_file}"
     callRegions="--callRegions ${bed_file}"
-    intervalpaths="--intervalpaths ${bed_file}"
+fi
+if [[ ! -z ${int_file+x} ]]; then
+    intervalpaths="--intervalpaths ${int_file}"
 fi
 
 if [[ ! -z ${vcf_file+x} ]]; then
     forcedGT="--forcedGT ${vcf_file}"
 fi
 
-#if [[ ! -z ${vcf_file+x} ]]; then
-  dotnet ~/ct208/tool/pisces/Pisces_5.2.7.47/Pisces.dll \
+mkdir -p $outDir/pisces
+if [[ $(ls $outDir/pisces/*.vcf |wc -l) < $(wc -l $sample_file|cut -f1 -d' ') ]];then
+  dotnet ~/ct208/tool/pisces/Pisces_5.2.9.122/Pisces.dll \
     -g /opt/data/db/genome/pisces/hg38_chrom \
     --bam $outDir/alignment \
     --outfolder $outDir/pisces \
-    --ploidy diploid \
-    --diploidgenotypeparameters 0.01,0.99,0.90 \
+    --ploidy somatic \
+    --MinimumFrequency 0.001 \
     $intervalpaths \
-    --crushvcf true \
+    --crushvcf false \
     --callmnvs false \
+    --NoiseLevelForQModel 30 \
+    --MinVariantQScore 20 \
     --minmapquality 0 \
-    --minbasecallquality 20
+    --minbasecallquality 30
+    # --diploidgenotypeparameters 0.01,0.99,0.90 \
+fi
 #else
 #  VARDIR=$outDir/variant
 #  if [[ ! -e ${VARDIR}/runWorkflow.py ]]; then
@@ -472,6 +479,7 @@ This is pipeline script I use for variant calling in amplicon based sequencing d
   -o, --out_dir     output dir name, default is a random name outputXXXX
   -V, --vcf_file    force genotype VCFs
   -b, --bed_file    bed file for calling variant in vcf file, must be bgzip/tabix
+  -i, --int_file    interval file for calling variant using Pisces
   -B, --cov_file    bed file for coverage statistics, using bamstat05
   -g, --gene_file   one gene symbol per line, should be official gene symbol
   -L, --min_length  reads shorter than length_required will be discarded, default is 15. (int [=15])
@@ -544,6 +552,7 @@ while [[ $1 = -?* ]]; do
     -o|--out_dir) shift; outDir=${1} ;;
     -V|--vcf_file) shift; vcf_file=${1} ;;
     -b|--bed_file) shift; bed_file=${1} ;;
+    -i|--int_file) shift; int_file=${1} ;;
     -B|--cov_file) shift; cov_file=${1} ;;
     -t|--threads) shift; threads=${1} ;;
     -L|--min_length) shift; min_length=${1} ;;
